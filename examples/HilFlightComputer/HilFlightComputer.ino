@@ -18,7 +18,11 @@
 const long BAUD = 115200;
 const int PIN_DROGUE = 5;
 const int PIN_MAIN = 6;
+#ifdef LED_BUILTIN
 const int PIN_LED = LED_BUILTIN;
+#else
+const int PIN_LED = 2;  // boards without a builtin LED definition (e.g. generic ESP32)
+#endif
 
 rufilters::FlightComputer<float> computer;
 char line[200];
