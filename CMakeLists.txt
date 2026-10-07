@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(RocketUpFilters VERSION 0.1.0 DESCRIPTION "State estimation for rocket flight computers" LANGUAGES CXX)
+project(RocketUpFilters VERSION 0.2.0 DESCRIPTION "State estimation for rocket flight computers" LANGUAGES CXX)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(RUFILTERS_TOP_LEVEL ON)
@@ -33,6 +33,8 @@ endif()
 if(RUFILTERS_BUILD_EXAMPLES)
     add_executable(replay_rocketup examples/desktop/replay_rocketup.cpp)
     target_link_libraries(replay_rocketup PRIVATE RocketUpFilters::RocketUpFilters)
+    add_executable(replay_log examples/desktop/replay_log.cpp)
+    target_link_libraries(replay_log PRIVATE RocketUpFilters::RocketUpFilters)
 endif()
 
 install(DIRECTORY src/ DESTINATION include)

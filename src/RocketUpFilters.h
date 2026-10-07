@@ -8,4 +8,4 @@
 #include "rufilters/Basics.h"
 #include "rufilters/FlightComputer.h"
 
-#define RUFILTERS_VERSION "0.1.0"
+#define RUFILTERS_VERSION "0.2.0"

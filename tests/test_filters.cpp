@@ -28,7 +28,7 @@ struct Sample {
 
 /// 1-D vertical flight: 3 s boost at 75 m/s^2, quadratic drag, drogue after apogee (25 m/s),
 /// main below 600 m (6 m/s). Sensors at 100 Hz with noise.
-std::vector<Sample> syntheticFlight(unsigned seed, double& trueApogeeTime, double& trueApogee) {
+std::vector<Sample> syntheticFlight(unsigned seed, double& trueApogeeTime, double& trueApogee, double sampleDt) {
     std::mt19937 rng(seed);
     std::normal_distribution<double> n(0.0, 1.0);
     const double g = 9.80665, k = 0.00025, p0 = 101325.0;
@@ -69,7 +69,7 @@ std::vector<Sample> syntheticFlight(unsigned seed, double& trueApogeeTime, doubl
             trueApogeeTime = t;
         }
         if (t >= nextSample) {
-            nextSample += 0.01;
+            nextSample += sampleDt;
             const double p = p0 * std::pow(1.0 - h / 44330.77, 1.0 / 0.190263) + 3.0 * n(rng);
             // Accelerometer along the axis: specific force (a + g) while the rocket points up;
             // under parachute the sensor tumbles, give it noise only.
@@ -80,15 +80,20 @@ std::vector<Sample> syntheticFlight(unsigned seed, double& trueApogeeTime, doubl
     return out;
 }
 
-void testFlight(unsigned seed) {
+/// `baroEvery`: the barometer delivers a new sample every n-th IMU sample (multi-rate).
+void testFlight(unsigned seed, double imuDt, int baroEvery) {
     double tApo, hApo;
-    const std::vector<Sample> s = syntheticFlight(seed, tApo, hApo);
+    const std::vector<Sample> s = syntheticFlight(seed, tApo, hApo, imuDt);
+    int k = 0;
+    float heldPressure = 0.0f;
     rufilters::FlightComputer<float> fc;
     double launch = -1, burnout = -1, apogee = -1, mainT = -1, landed = -1, mainTrueAlt = -1;
     double sumErr2 = 0;
     int nErr = 0;
     for (const Sample& x : s) {
-        const uint8_t ev = fc.update(static_cast<float>(x.t), static_cast<float>(x.pressure), static_cast<float>(x.axial));
+        const bool fresh = (k++ % baroEvery) == 0;
+        if (fresh) heldPressure = static_cast<float>(x.pressure);
+        const uint8_t ev = fc.update(static_cast<float>(x.t), heldPressure, static_cast<float>(x.axial), fresh);
         if (ev & rufilters::EventLaunch) launch = x.t;
         if (ev & rufilters::EventBurnout) burnout = x.t;
         if (ev & rufilters::EventApogee) apogee = x.t;
@@ -146,7 +151,8 @@ void testBasics() {
 int main() {
     testBasics();
     testKalmanConvergence();
-    for (unsigned seed = 1; seed <= 20; ++seed) testFlight(seed);
+    for (unsigned seed = 1; seed <= 20; ++seed) testFlight(seed, 0.01, 1);    // 100 Hz, both sensors
+    for (unsigned seed = 21; seed <= 30; ++seed) testFlight(seed, 0.005, 4);  // IMU 200 Hz, baro 50 Hz
     std::printf("%d/%d checks passed\n", checks - failures, checks);
     return failures == 0 ? 0 : 1;
 }

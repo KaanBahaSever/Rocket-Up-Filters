@@ -32,11 +32,11 @@ inline const char* phaseName(Phase p) {
 template <typename T = float>
 struct DetectorConfig {
     T launchAccel = T(3.0 * 9.81);  ///< axial specific force threshold (m/s^2)
-    int launchSamples = 5;          ///< consecutive samples above the threshold
+    T launchConfirmTime = T(0.05);  ///< s the threshold must be exceeded continuously
     T launchAltitude = T(30);       ///< backup launch detection on altitude (m)
     T apogeeLockout = T(5);         ///< s after launch before apogee may be declared
     T minApogeeAltitude = T(30);    ///< m; ignore "apogees" below this
-    int apogeeSamples = 5;          ///< consecutive samples with negative velocity
+    T apogeeConfirmTime = T(0.1);   ///< s of continuously negative velocity
     T apogeeDrop = T(3);            ///< m below the maximum altitude (second condition)
     T mainAltitude = T(600);        ///< m above the pad
     T landedSpeed = T(2);           ///< m/s
@@ -56,11 +56,15 @@ public:
         switch (phase_) {
             case Phase::Calibrating:
             case Phase::Pad:
-                count_ = axialAccel > c_.launchAccel ? count_ + 1 : 0;
-                if (count_ >= c_.launchSamples || altitude > c_.launchAltitude) {
+                if (axialAccel > c_.launchAccel) {
+                    if (since_ < T(0)) since_ = time;
+                } else {
+                    since_ = T(-1);
+                }
+                if ((since_ >= T(0) && time - since_ >= c_.launchConfirmTime) || altitude > c_.launchAltitude) {
                     phase_ = Phase::Boost;
-                    launchTime_ = time;
-                    count_ = 0;
+                    launchTime_ = since_ >= T(0) ? since_ : time;
+                    since_ = T(-1);
                     ev |= EventLaunch;
                 }
                 break;
@@ -73,13 +77,18 @@ public:
                 // fall through - apogee detection also runs in the boost phase (very short burns)
             case Phase::Coast:
                 if (time - launchTime_ > c_.apogeeLockout && maxAltitude_ > c_.minApogeeAltitude) {
-                    count_ = velocity < T(0) ? count_ + 1 : 0;
-                    if (count_ >= c_.apogeeSamples && maxAltitude_ - altitude > c_.apogeeDrop) {
+                    if (velocity < T(0)) {
+                        if (since_ < T(0)) since_ = time;
+                    } else {
+                        since_ = T(-1);
+                    }
+                    if (since_ >= T(0) && time - since_ >= c_.apogeeConfirmTime &&
+                        maxAltitude_ - altitude > c_.apogeeDrop) {
                         if (phase_ == Phase::Boost) ev |= EventBurnout;
                         phase_ = Phase::Drogue;
                         apogeeTime_ = time;
                         apogeeAltitude_ = maxAltitude_;
-                        count_ = 0;
+                        since_ = T(-1);
                         ev |= EventApogee;
                     }
                 }
@@ -120,7 +129,7 @@ public:
 private:
     DetectorConfig<T> c_;
     Phase phase_ = Phase::Calibrating;
-    int count_ = 0;
+    T since_ = T(-1);  ///< start of the current confirmation window
     T launchTime_ = T(-1), burnoutTime_ = T(-1), apogeeTime_ = T(-1), apogeeAltitude_ = T(0);
     T maxAltitude_ = T(-1e9);
     T stillSince_ = T(-1);
@@ -153,9 +162,13 @@ public:
 
     /// `pressure` in Pa, `axialAccel` = accelerometer reading along the rocket axis (m/s^2,
     /// +g when standing on the pad). Returns the Event bits detected in this call.
-    uint8_t update(T time, T pressure, T axialAccel) {
+    ///
+    /// Sensors often run at different rates (e.g. MPU6050 at 200 Hz, BMP280 at 50 Hz): call
+    /// update() at the IMU rate and pass `pressureIsNew = false` when the barometer has not
+    /// produced a new sample, so the same pressure is not counted twice.
+    uint8_t update(T time, T pressure, T axialAccel, bool pressureIsNew = true) {
         if (!cal_.done()) {
-            if (cal_.add(pressure)) {
+            if (pressureIsNew && cal_.add(pressure)) {
                 groundPressure_ = cal_.mean();
                 kf_.reset(T(0));
                 det_.setPadReady();
@@ -166,7 +179,7 @@ public:
         const T dt = time - lastTime_;
         lastTime_ = time;
         kf_.predict(dt > T(0) && dt < T(1) ? dt : T(0.01));
-        kf_.updateAltitude(pressureToAltitude<T>(pressure, groundPressure_));
+        if (pressureIsNew) kf_.updateAltitude(pressureToAltitude<T>(pressure, groundPressure_));
         const Phase p = det_.phase();
         if (p == Phase::Pad || p == Phase::Boost || p == Phase::Coast) kf_.updateAcceleration(axialAccel - c_.gravity);
         return det_.update(time, axialAccel, kf_.altitude(), kf_.velocity());
